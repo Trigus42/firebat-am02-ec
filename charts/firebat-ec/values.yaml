@@ -1,0 +1,38 @@
+image:
+  repository: ghcr.io/trigus42/firebat-am02-ec
+  tag: ""  # defaults to appVersion
+  pullPolicy: IfNotPresent
+
+daemon:
+  interval: "5s"
+  config: |
+    {
+      "fan_curve": [
+        {"temp_c": 0,  "duty_percent": 0},
+        {"temp_c": 40, "duty_percent": 0},
+        {"temp_c": 50, "duty_percent": 20},
+        {"temp_c": 60, "duty_percent": 40},
+        {"temp_c": 70, "duty_percent": 60},
+        {"temp_c": 80, "duty_percent": 80},
+        {"temp_c": 90, "duty_percent": 100}
+      ],
+      "interval_seconds": 5,
+      "hysteresis_degrees": 2,
+      "smoothing_factor": 0.3
+    }
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+resources:
+  limits:
+    memory: 32Mi
+    cpu: 50m
+  requests:
+    memory: 16Mi
+    cpu: 10m

@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "firebat-ec.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "firebat-ec.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "firebat-ec.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "firebat-ec.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Values.daemon.config | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      hostPID: false
+      hostNetwork: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: firebat-ec
+          image: {{ include "firebat-ec.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - daemon
+            - -config
+            - /etc/firebat-ec/config.json
+          securityContext:
+            # Minimal privilege: only CAP_SYS_RAWIO is needed for IO port access.
+            # We do NOT run as privileged — instead we grant only the single
+            # capability required and drop everything else.
+            privileged: false
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["SYS_RAWIO"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/firebat-ec
+              readOnly: true
+            - name: dev-port
+              mountPath: /dev/port
+              readOnly: false
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "firebat-ec.fullname" . }}
+        - name: dev-port
+          hostPath:
+            path: /dev/port
+            type: CharDevice

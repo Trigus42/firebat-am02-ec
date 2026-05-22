@@ -1,0 +1,12 @@
+firebat-ec has been deployed to namespace {{ .Release.Namespace }}.
+
+The fan control daemon is now managing fan speed based on CPU temperature.
+
+To check status:
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "firebat-ec.name" . }}
+
+To temporarily override fan speed:
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "firebat-ec.fullname" . }} -- /firebat-ec fan set 50
+
+To restore automatic EC control (if daemon is stopped):
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "firebat-ec.fullname" . }} -- /firebat-ec fan auto
