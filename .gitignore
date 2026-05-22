@@ -1,0 +1,15 @@
+# Binaries
+/firebat-ec
+/cmd/firebat-ec/firebat-ec
+*.exe
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
