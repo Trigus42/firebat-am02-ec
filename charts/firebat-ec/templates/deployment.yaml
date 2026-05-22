@@ -41,19 +41,15 @@ spec:
             - -config
             - /etc/firebat-ec/config.json
           securityContext:
-            # Minimal privilege: only CAP_SYS_RAWIO is needed for IO port access.
-            # We do NOT run as privileged — instead we grant only the single
-            # capability required and drop everything else.
-            privileged: false
+            # Privileged is required because the container needs access to
+            # /dev/port, and the device cgroup in Kubernetes blocks access to
+            # character devices in non-privileged containers regardless of
+            # capabilities. CAP_SYS_RAWIO alone is insufficient.
+            privileged: true
             runAsNonRoot: false
             runAsUser: 0
-            allowPrivilegeEscalation: false
+            allowPrivilegeEscalation: true
             readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-              add: ["SYS_RAWIO"]
-            seccompProfile:
-              type: RuntimeDefault
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
