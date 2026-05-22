@@ -92,30 +92,36 @@ func TestAbs(t *testing.T) {
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if len(cfg.Curve) == 0 {
-		t.Fatal("DefaultConfig has empty curve")
-	}
-
-	// Verify curve is sorted by temperature.
-	for i := 1; i < len(cfg.Curve); i++ {
-		if cfg.Curve[i].TempC <= cfg.Curve[i-1].TempC {
-			t.Errorf("curve not sorted: point %d (TempC=%d) <= point %d (TempC=%d)",
-				i, cfg.Curve[i].TempC, i-1, cfg.Curve[i-1].TempC)
-		}
-	}
-
-	// Verify duty values are in valid range.
-	for i, p := range cfg.Curve {
-		if p.DutyPercent < 0 || p.DutyPercent > 100 {
-			t.Errorf("curve point %d: duty %d out of range [0, 100]", i, p.DutyPercent)
-		}
+	if len(cfg.Fans) == 0 {
+		t.Fatal("DefaultConfig has no fans")
 	}
 
 	if cfg.Interval <= 0 {
 		t.Errorf("interval = %v, want > 0", cfg.Interval)
 	}
 
-	if cfg.SmoothingFactor < 0 || cfg.SmoothingFactor > 1 {
-		t.Errorf("smoothing factor = %v, want [0, 1]", cfg.SmoothingFactor)
+	for fi, fc := range cfg.Fans {
+		if len(fc.Curve) == 0 {
+			t.Fatalf("fan %d has empty curve", fi)
+		}
+
+		// Verify curve is sorted by temperature.
+		for i := 1; i < len(fc.Curve); i++ {
+			if fc.Curve[i].TempC <= fc.Curve[i-1].TempC {
+				t.Errorf("fan %d curve not sorted: point %d (TempC=%d) <= point %d (TempC=%d)",
+					fi, i, fc.Curve[i].TempC, i-1, fc.Curve[i-1].TempC)
+			}
+		}
+
+		// Verify duty values are in valid range.
+		for i, p := range fc.Curve {
+			if p.DutyPercent < 0 || p.DutyPercent > 100 {
+				t.Errorf("fan %d curve point %d: duty %d out of range [0, 100]", fi, i, p.DutyPercent)
+			}
+		}
+
+		if fc.SmoothingFactor < 0 || fc.SmoothingFactor > 1 {
+			t.Errorf("fan %d smoothing factor = %v, want [0, 1]", fi, fc.SmoothingFactor)
+		}
 	}
 }

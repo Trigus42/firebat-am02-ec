@@ -7,18 +7,39 @@ daemon:
   interval: "5s"
   config: |
     {
-      "fan_curve": [
-        {"temp_c": 0,  "duty_percent": 0},
-        {"temp_c": 40, "duty_percent": 0},
-        {"temp_c": 50, "duty_percent": 20},
-        {"temp_c": 60, "duty_percent": 40},
-        {"temp_c": 70, "duty_percent": 60},
-        {"temp_c": 80, "duty_percent": 80},
-        {"temp_c": 90, "duty_percent": 100}
-      ],
       "interval_seconds": 5,
       "hysteresis_degrees": 2,
-      "smoothing_factor": 0.3
+      "smoothing_factor": 0.3,
+      "fans": [
+        {
+          "name": "fan1",
+          "fan": 1,
+          "sensor": "cpu",
+          "fan_curve": [
+            {"temp_c": 0,  "duty_percent": 0},
+            {"temp_c": 40, "duty_percent": 0},
+            {"temp_c": 50, "duty_percent": 20},
+            {"temp_c": 60, "duty_percent": 40},
+            {"temp_c": 70, "duty_percent": 60},
+            {"temp_c": 80, "duty_percent": 80},
+            {"temp_c": 90, "duty_percent": 100}
+          ]
+        },
+        {
+          "name": "fan2",
+          "fan": 2,
+          "sensor": "cpu",
+          "fan_curve": [
+            {"temp_c": 0,  "duty_percent": 0},
+            {"temp_c": 40, "duty_percent": 0},
+            {"temp_c": 50, "duty_percent": 20},
+            {"temp_c": 60, "duty_percent": 40},
+            {"temp_c": 70, "duty_percent": 60},
+            {"temp_c": 80, "duty_percent": 80},
+            {"temp_c": 90, "duty_percent": 100}
+          ]
+        }
+      ]
     }
 
 nodeSelector:

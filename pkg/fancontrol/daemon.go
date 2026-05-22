@@ -2,7 +2,8 @@
 //
 // It reads CPU temperature at a configurable interval, maps it to a duty cycle
 // using a piecewise-linear fan curve, and applies hysteresis and smoothing to
-// prevent rapid fan speed oscillations.
+// prevent rapid fan speed oscillations. Each fan can have its own curve and
+// temperature source.
 package fancontrol
 
 import (
@@ -21,15 +22,20 @@ type CurvePoint struct {
 	DutyPercent int // Fan duty cycle at this temperature (0–100).
 }
 
-// Config holds all tunable parameters for the fan control daemon.
-type Config struct {
+// FanConfig holds the curve and settings for a single fan.
+type FanConfig struct {
+	// Name is used in log messages (e.g. "fan1", "fan2").
+	Name string
+
+	// Fan is the hardware fan to control.
+	Fan *device.Fan
+
+	// Sensor is the temperature source for this fan's curve.
+	Sensor *device.ThermalSensor
+
 	// Curve maps temperatures to fan duty cycles.
 	// Must be sorted by TempC in ascending order.
-	// Example: [{0, 0}, {40, 0}, {50, 20}, {60, 40}, {70, 60}, {80, 80}, {90, 100}]
 	Curve []CurvePoint
-
-	// Interval between temperature readings and fan adjustments.
-	Interval time.Duration
 
 	// HysteresisDegrees prevents duty changes unless temperature has moved
 	// at least this many degrees from the last adjustment point.
@@ -41,67 +47,93 @@ type Config struct {
 	SmoothingFactor float64
 }
 
+// Config holds all tunable parameters for the fan control daemon.
+type Config struct {
+	// Fans contains the configuration for each fan to control.
+	Fans []FanConfig
+
+	// Interval between temperature readings and fan adjustments.
+	Interval time.Duration
+}
+
 // DefaultConfig returns a sensible fan curve for the FIREBAT AM02.
+// Both fans use the same default curve with CPU temperature.
 func DefaultConfig() Config {
-	return Config{
-		Curve: []CurvePoint{
-			{TempC: 0, DutyPercent: 0},
-			{TempC: 40, DutyPercent: 0},
-			{TempC: 50, DutyPercent: 20},
-			{TempC: 60, DutyPercent: 40},
-			{TempC: 70, DutyPercent: 60},
-			{TempC: 80, DutyPercent: 80},
-			{TempC: 90, DutyPercent: 100},
-		},
-		Interval:          5 * time.Second,
-		HysteresisDegrees: 2,
-		SmoothingFactor:   0.3,
+	defaultCurve := []CurvePoint{
+		{TempC: 0, DutyPercent: 0},
+		{TempC: 40, DutyPercent: 0},
+		{TempC: 50, DutyPercent: 20},
+		{TempC: 60, DutyPercent: 40},
+		{TempC: 70, DutyPercent: 60},
+		{TempC: 80, DutyPercent: 80},
+		{TempC: 90, DutyPercent: 100},
 	}
+
+	return Config{
+		Fans: []FanConfig{
+			{
+				Name:              "fan1",
+				Curve:             defaultCurve,
+				HysteresisDegrees: 2,
+				SmoothingFactor:   0.3,
+			},
+			{
+				Name:              "fan2",
+				Curve:             defaultCurve,
+				HysteresisDegrees: 2,
+				SmoothingFactor:   0.3,
+			},
+		},
+		Interval: 5 * time.Second,
+	}
+}
+
+// fanState tracks the runtime state for one fan.
+type fanState struct {
+	smoothedTemp float64
+	lastDuty     int
+	initialized  bool
 }
 
 // Daemon runs the fan control loop.
 type Daemon struct {
-	fan    *device.Fan
-	sensor *device.ThermalSensor
 	config Config
 	logger *slog.Logger
 }
 
 // NewDaemon creates a fan control daemon.
-func NewDaemon(fan *device.Fan, sensor *device.ThermalSensor, config Config, logger *slog.Logger) *Daemon {
+func NewDaemon(config Config, logger *slog.Logger) *Daemon {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Daemon{
-		fan:    fan,
-		sensor: sensor,
 		config: config,
 		logger: logger,
 	}
 }
 
 // Run starts the fan control loop. It blocks until the context is cancelled.
-// On exit (including context cancellation), it restores the fan to automatic mode.
+// On exit (including context cancellation), it restores all fans to automatic mode.
 func (d *Daemon) Run(ctx context.Context) error {
 	d.logger.Info("fan control daemon starting",
 		"interval", d.config.Interval,
-		"hysteresis", d.config.HysteresisDegrees,
-		"curve_points", len(d.config.Curve),
+		"fans", len(d.config.Fans),
 	)
 
 	// Always restore auto mode on exit.
 	defer func() {
 		d.logger.Info("restoring automatic fan control")
-		if err := d.fan.SetAuto(); err != nil {
-			d.logger.Error("failed to restore auto mode", "error", err)
+		for _, fc := range d.config.Fans {
+			if err := fc.Fan.SetAuto(); err != nil {
+				d.logger.Error("failed to restore auto mode", "fan", fc.Name, "error", err)
+			}
 		}
 	}()
 
-	var (
-		smoothedTemp float64
-		lastDuty     = -1
-		initialized  = false
-	)
+	states := make([]fanState, len(d.config.Fans))
+	for i := range states {
+		states[i].lastDuty = -1
+	}
 
 	ticker := time.NewTicker(d.config.Interval)
 	defer ticker.Stop()
@@ -111,42 +143,50 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			temp, err := d.sensor.ReadCelsius()
-			if err != nil {
-				d.logger.Error("failed to read temperature", "error", err)
-				continue
-			}
-
-			// Exponential moving average for stable readings.
-			if !initialized {
-				smoothedTemp = float64(temp)
-				initialized = true
-			} else {
-				alpha := d.config.SmoothingFactor
-				smoothedTemp = alpha*smoothedTemp + (1-alpha)*float64(temp)
-			}
-
-			targetDuty := Interpolate(smoothedTemp, d.config.Curve)
-
-			// Apply hysteresis: don't change duty for small fluctuations.
-			if lastDuty >= 0 && abs(targetDuty-lastDuty) < 3 {
-				continue
-			}
-
-			if targetDuty != lastDuty {
-				if err := d.fan.SetDuty(targetDuty); err != nil {
-					d.logger.Error("failed to set fan duty", "duty", targetDuty, "error", err)
-					continue
-				}
-				d.logger.Info("fan duty adjusted",
-					"temp_raw", temp,
-					"temp_avg", fmt.Sprintf("%.1f", smoothedTemp),
-					"duty", targetDuty,
-				)
-				lastDuty = targetDuty
+			for i, fc := range d.config.Fans {
+				d.updateFan(&states[i], &fc)
 			}
 		}
 	}
+}
+
+func (d *Daemon) updateFan(state *fanState, fc *FanConfig) {
+	temp, err := fc.Sensor.ReadCelsius()
+	if err != nil {
+		d.logger.Error("failed to read temperature", "fan", fc.Name, "error", err)
+		return
+	}
+
+	// Exponential moving average for stable readings.
+	if !state.initialized {
+		state.smoothedTemp = float64(temp)
+		state.initialized = true
+	} else {
+		alpha := fc.SmoothingFactor
+		state.smoothedTemp = alpha*state.smoothedTemp + (1-alpha)*float64(temp)
+	}
+
+	targetDuty := Interpolate(state.smoothedTemp, fc.Curve)
+
+	// Always enforce the target duty. This corrects any external manual
+	// changes (e.g. via "fan set") and ensures the daemon stays in control.
+	// Only apply hysteresis to suppress log spam — we still write the duty.
+	shouldLog := state.lastDuty < 0 || abs(targetDuty-state.lastDuty) >= 3
+
+	if err := fc.Fan.SetDuty(targetDuty); err != nil {
+		d.logger.Error("failed to set fan duty", "fan", fc.Name, "duty", targetDuty, "error", err)
+		return
+	}
+
+	if shouldLog && targetDuty != state.lastDuty {
+		d.logger.Info("fan duty adjusted",
+			"fan", fc.Name,
+			"temp_raw", temp,
+			"temp_avg", fmt.Sprintf("%.1f", state.smoothedTemp),
+			"duty", targetDuty,
+		)
+	}
+	state.lastDuty = targetDuty
 }
 
 // Interpolate maps a temperature to a duty cycle using piecewise linear interpolation.
