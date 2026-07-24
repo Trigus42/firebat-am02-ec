@@ -27,7 +27,7 @@ Common labels.
 {{- define "firebat-ec.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{ include "firebat-ec.selectorLabels" . }}
-app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ (splitList "@" (.Values.image.tag | default .Chart.AppVersion)) | first | trunc 63 | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
